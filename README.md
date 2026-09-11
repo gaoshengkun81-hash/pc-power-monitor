@@ -13,12 +13,26 @@
 
 ## 安装与运行
 
+**方式一：免安装 exe（推荐）**
+
+直接双击 `启动.bat`，或运行 `dist\PCPowerMonitor.exe`（约 12 MB，无需 Python 环境）。
+
+**方式二：源码运行**
+
 ```bat
 pip install -r requirements.txt
 python power_monitor.py
 ```
 
-或直接双击 `启动.bat`。
+## 打包方法
+
+```bat
+pip install pyinstaller
+python -m PyInstaller --noconfirm --clean --onefile --noconsole --name "PCPowerMonitor" ^
+    --hidden-import win32com.client --hidden-import pythoncom ^
+    --hidden-import wmi --hidden-import psutil --hidden-import pynvml ^
+    power_monitor.py
+```
 
 ## 数据源说明（自动探测，无需配置）
 
