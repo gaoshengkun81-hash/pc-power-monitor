@@ -224,7 +224,7 @@ class App(tk.Tk):
         # 历史曲线
         self.canvas = tk.Canvas(self, width=self.WIDTH - 20, height=90,
                                 bg=BG, highlightthickness=1,
-                                highlightbackground="##2a2e36".replace("##", "#"))
+                                highlightbackground="#2a2e36")
         self.canvas.pack(pady=8)
 
         # 分项
