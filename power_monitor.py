@@ -6,6 +6,7 @@ PC Power Monitor —— 电脑总功率实时监控小桌面工具 (Windows)
   1. NVIDIA 显卡功耗   —— pynvml / nvidia-smi
   2. LibreHardwareMonitor / OpenHardwareMonitor —— WMI(root\LibreHardwareMonitor)
      需要以管理员身份运行 LHM/OHM 才能读到 CPU Package 等功耗传感器
+     注意: LHM 0.9.5+ 移除了 WMI 发布，必须用 0.9.4 或更早版本
   3. 笔记本电池放电功率 —— WMI(root\WMI BatteryStatus)
      用电池供电时，放电功率 ≈ 整机真实总功率
 
@@ -13,6 +14,7 @@ PC Power Monitor —— 电脑总功率实时监控小桌面工具 (Windows)
   · 电池供电  -> 总功率 = 电池放电功率（最准，包含所有部件）
   · 外接电源  -> 总功率 = CPU 功耗 + GPU 功耗（能读到的部分之和）
 """
+import os
 import subprocess
 import sys
 import threading
@@ -73,7 +75,11 @@ def _wmi_ns(ns):
 
 
 def lhm_power_watts():
-    """LibreHardwareMonitor / OpenHardwareMonitor -> (cpu_W, gpu_W, others_W, err)"""
+    """LibreHardwareMonitor / OpenHardwareMonitor -> (cpu_W, gpu_W, others_W, err)
+
+    兼容 Intel("CPU Package"/"IA Cores") 与 AMD("CPU PPT"/"Core Power (SVI2/SVI3)")
+    等不同命名。
+    """
     for ns in (r"root\LibreHardwareMonitor", r"root\OpenHardwareMonitor"):
         try:
             conn = _wmi_ns(ns)
@@ -84,18 +90,74 @@ def lhm_power_watts():
                     continue
                 name = (s.Name or "").lower()
                 val = float(s.Value or 0)
-                if "cpu package" in name:
+                if ("cpu package" in name or "cpu ppt" in name
+                        or "ia cores" in name or "core power" in name):
                     cpu += val; found = True
-                elif "gpu" in name and ("board" in name or "power" in name):
+                elif "gpu" in name and ("power" in name or "board" in name
+                                        or "package" in name):
                     gpu += val; found = True
-                elif name in ("package",):
-                    cpu += val; found = True
             if found:
                 return cpu, gpu, others, None
             return None, None, None, f"{ns} 运行中但没有功耗传感器"
         except Exception:
             continue
     return None, None, None, "未检测到 LHM/OHM(请以管理员运行获取CPU功耗)"
+
+
+def _lhm_available():
+    for ns in (r"root\LibreHardwareMonitor", r"root\OpenHardwareMonitor"):
+        try:
+            _wmi_ns(ns)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _find_lhm_exe():
+    r"""在脚本/exe 附近的 lhm\ 目录寻找 LibreHardwareMonitor.exe"""
+    bases = []
+    try:
+        bases.append(os.path.dirname(os.path.abspath(__file__)))
+    except Exception:
+        pass
+    bases.append(os.path.dirname(os.path.abspath(sys.executable)))
+    for b in bases:
+        for rel in ("lhm", os.path.join("..", "lhm")):
+            p = os.path.normpath(os.path.join(b, rel, "LibreHardwareMonitor.exe"))
+            if os.path.isfile(p):
+                return p
+    return None
+
+
+def ensure_lhm(timeout=30):
+    """没有 LHM 数据源时，自动以管理员身份启动内置 LHM（仅首次弹 UAC）。"""
+    try:
+        if _lhm_available():
+            return True
+        exe = _find_lhm_exe()
+        if not exe:
+            return False
+        from win32com.shell import shell, shellcon
+        try:
+            shell.ShellExecuteEx(
+                fMask=shellcon.SEE_MASK_NOCLOSEPROCESS,
+                lpVerb="runas",            # 触发 UAC，装内核驱动读 CPU 功耗
+                lpFile=exe,
+                lpDirectory=os.path.dirname(exe),
+                nShow=1,
+            )
+        except Exception:
+            return False  # 用户取消 UAC 或权限不足
+        # 等待 WMI 命名空间就绪
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if _lhm_available():
+                return True
+            time.sleep(1)
+        return False
+    except Exception:
+        return False
 
 
 def battery_power_watts():
@@ -142,6 +204,7 @@ class Collector(threading.Thread):
     def run(self):
         # psutil 首次调用返回 0.0，预热
         cpu_percent()
+        ensure_lhm()  # 首次运行会自动请求管理员权限启动 LHM（可取消）
         while not self._stop:
             t0 = time.time()
             gpu_w, gpu_src = gpu_power_watts()
@@ -281,8 +344,8 @@ class App(tk.Tk):
             self.lbl_total.config(text="--.-", fg=DIM)
             self.lbl_mode.config(text="未找到数据源")
             self.lbl_hint.config(
-                text="提示: 以管理员身份运行 LibreHardwareMonitor 可读取 CPU 等功耗; "
-                     "NVIDIA 显卡可自动读取 GPU 功耗; 笔记本用电池时显示真实整机功率")
+                text="提示: 首次运行会请求管理员权限启动内置 LibreHardwareMonitor 以读取 CPU 功耗"
+                     "(请在 UAC 弹窗点'是'); NVIDIA 显卡可自动读取; 笔记本用电池时显示真实整机功率")
         else:
             color = ACCENT if total < 150 else (WARN if total < 300 else BAD)
             self.lbl_total.config(text=f"{total:,.1f}", fg=color)

@@ -1,0 +1,11 @@
+# 打包产物
+build/
+dist/
+*.spec
+
+# 内置的 LibreHardwareMonitor（二进制，体积大，不入库）
+lhm/
+
+# Python
+__pycache__/
+*.pyc
